@@ -50,10 +50,20 @@ claude-voice --cwd ~/Obsidian/Vault \
   --voice Samantha --rate 200
 ```
 
-**Use headphones** (or AirPods) for real barge-in. On laptop speakers Claude's
-own voice reaches the mic. `--barge-in-ms` already requires a longer run of
-speech while it's talking, but echo can still trigger it. If it does, raise
-`--barge-in-ms` to 500–700 or use `--vad 3`.
+**Echo cancellation (no headphones needed).** Build the small Mac helper once:
+
+```bash
+sh macos/build.sh
+```
+
+After that, `claude-voice` uses it automatically and prints "echo cancellation
+on". It uses Apple's Voice Processing I/O, the echo cancellation FaceTime uses,
+so Claude's voice is subtracted from what the mic hears and you can interrupt
+it over the laptop speakers. The helper also does the speaking, using the same
+voices as `say` (`--voice`, `--rate`), because the Mac can only cancel sound it
+plays itself. While it runs, macOS may turn down other audio such as music, as
+it does on a FaceTime call. `--no-aec` turns it off. Without the helper, use
+headphones, or raise `--barge-in-ms` if Claude interrupts itself.
 
 ### Other setups
 
@@ -68,7 +78,7 @@ speech while it's talking, but echo can still trigger it. If it does, raise
 | Flag | Default | |
 |---|---|---|
 | `--end-silence-ms` | 700 | How long a pause ends your turn. Raise it if you get cut off mid-thought. |
-| `--barge-in-ms` | 350 | How much speech it takes to interrupt Claude. |
+| `--barge-in-ms` | 250 / 350 | How much speech it takes to interrupt Claude. |
 | `--permission-mode` | `default` | `acceptEdits` skips approvals for file edits. Approvals for shell commands are still spoken. |
 | `--auto-allow` | read-only tools | Tools that never need a spoken yes. Allow rules in `~/.claude/settings.json` apply as well. |
 | `--vocab` | | Words to bias Whisper toward: hostnames, project names, jargon. |
@@ -81,6 +91,7 @@ speech while it's talking, but echo can still trigger it. If it does, raise
 | `claude_voice/agent.py` | `ClaudeSDKClient` session (`include_partial_messages` for token streaming), the voice system prompt, and the spoken permission gate (`can_use_tool`). |
 | `claude_voice/conversation.py` | Turn-taking state machine: hold, resume or interrupt, approvals, and the "what you heard" note. |
 | `claude_voice/audio.py` | Mic capture with WebRTC VAD in 30 ms frames, and the keyboard stand-in. |
+| `claude_voice/macaudio.py` + `macos/AudioHelper.swift` | Echo-cancelled mic and speech on macOS. |
 | `claude_voice/stt.py` | mlx-whisper / faster-whisper, with Whisper's silence hallucinations filtered out. |
 | `claude_voice/tts.py` | `say` / `espeak` / Kokoro backends and the interruptible `Speaker` queue. |
 | `claude_voice/speech_text.py` | Turns streamed markdown into speakable sentences. |
@@ -90,24 +101,21 @@ and the barge-in / approval logic, using a scripted agent and a fake voice.
 
 ## Scope: what v1 is and isn't
 
-**In:** full-duplex-ish turn-taking with barge-in, streaming speech (the first
+**In:** full-duplex-ish turn-taking with barge-in, echo cancellation on macOS, streaming speech (the first
 sentence plays while Claude is still writing), spoken tool approvals, local
 STT, local TTS, session continuity with the regular CLI.
 
 **Not yet, roughly in order of payoff:**
 
-1. **Echo cancellation**, so it works on open speakers. macOS has it built in
-   (the Voice Processing I/O audio unit). The cleanest route is a small Swift
-   helper that streams AEC'd PCM to this process over stdin.
-2. **Streaming STT.** Right now transcription starts after you stop talking
+1. **Streaming STT.** Right now transcription starts after you stop talking
    (~0.3–0.8 s on an M-series Mac with small.en). A streaming recogniser would
    remove most of that delay and allow smarter end-of-turn detection, so a
    pause after "and then…" doesn't end your turn.
-3. **TTS prefetch.** Synthesise sentence N+1 while N plays. This matters for
+2. **TTS prefetch.** Synthesise sentence N+1 while N plays. This matters for
    Kokoro and cloud voices, less for `say`.
-4. **Wake word / push-to-talk** for leaving it running all day (e.g.
+3. **Wake word / push-to-talk** for leaving it running all day (e.g.
    openWakeWord, or a global hotkey that unmutes `MicListener.muted`).
-5. **Phone and away-from-desk access**: put a WebRTC or SIP front-end in front
+4. **Phone and away-from-desk access**: put a WebRTC or SIP front-end in front
    of the same `VoiceConversation`, reachable over your tailnet. The input and
    output sides are already separate, so this means a new `audio.py` source and
    `tts.py` sink, not a rewrite.

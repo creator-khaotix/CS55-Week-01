@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import sys
 
 from .agent import DEFAULT_AUTO_ALLOW, ClaudeCodeAgent, VoicePermissionGate, build_options
 from .audio import KeyboardInput, MicListener
 from .conversation import VoiceConversation
 from .events import InputEvent
+from .macaudio import EchoCancelledMic, HelperTTS, MacAudioHelper, helper_available
 from .stt import default_stt_name, make_stt
 from .tts import Speaker, default_tts_name, make_tts
 from .ui import Console
@@ -44,12 +46,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     g.add_argument("--voice", help="TTS voice (say -v '?' lists macOS voices)")
     g.add_argument("--rate", type=int, help="speaking rate (words per minute for say/espeak)")
     g.add_argument("--input-device", help="sounddevice input device index or name")
+    g.add_argument("--no-aec", action="store_true",
+                   help="don't use macOS echo cancellation even if the helper is built")
 
     g = p.add_argument_group("turn-taking")
     g.add_argument("--end-silence-ms", type=int, default=700,
                    help="silence that ends your turn (raise if it cuts you off mid-thought)")
-    g.add_argument("--barge-in-ms", type=int, default=350,
-                   help="speech needed to interrupt Claude (raise if its own voice triggers it)")
+    g.add_argument("--barge-in-ms", type=int, default=None,
+                   help="speech needed to interrupt Claude (default 250 with echo "
+                        "cancellation, 350 without; raise if its own voice triggers it)")
     g.add_argument("--vad", type=int, default=2, choices=[0, 1, 2, 3],
                    help="VAD aggressiveness, 3 = most eager to call things noise")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -60,8 +65,23 @@ async def amain(args: argparse.Namespace) -> None:
     console = Console(verbose=args.verbose)
     events: asyncio.Queue[InputEvent] = asyncio.Queue()
 
-    tts_name = "print" if (args.mute or args.text and args.tts is None) else (args.tts or default_tts_name())
-    speaker = Speaker(make_tts(tts_name, args.voice, args.rate))
+    # Echo cancellation needs the helper to own both mic and speaker.
+    use_aec = not (args.text or args.mute or args.no_aec or args.tts) and helper_available()
+    helper = None
+    if use_aec:
+        helper = MacAudioHelper()
+        try:
+            helper.start()
+            console.status("echo cancellation on")
+        except RuntimeError as exc:
+            console.note(f"{exc}; continuing without echo cancellation")
+            helper, use_aec = None, False
+
+    if helper is not None:
+        speaker = Speaker(HelperTTS(helper, args.voice, args.rate))
+    else:
+        tts_name = "print" if (args.mute or args.text and args.tts is None) else (args.tts or default_tts_name())
+        speaker = Speaker(make_tts(tts_name, args.voice, args.rate))
 
     gate = VoicePermissionGate(
         ask=speaker.say,
@@ -90,14 +110,18 @@ async def amain(args: argparse.Namespace) -> None:
         device = args.input_device
         if device is not None and device.isdigit():
             device = int(device)
-        source = MicListener(
-            events,
+        vad = dict(
             vad_aggressiveness=args.vad,
             end_silence_ms=args.end_silence_ms,
-            barge_in_ms=args.barge_in_ms,
+            barge_in_ms=args.barge_in_ms or (250 if use_aec else 350),
             is_assistant_talking=lambda: speaker.talking,
-            device=device,
         )
+        if helper is not None:
+            source = EchoCancelledMic(events, helper, **vad)
+        else:
+            if sys.platform == "darwin":
+                console.note("no echo cancellation: run macos/build.sh, or use headphones")
+            source = MicListener(events, device=device, **vad)
 
     console.status(f"connecting to Claude Code in {args.cwd}")
     await agent.connect()
@@ -108,6 +132,8 @@ async def amain(args: argparse.Namespace) -> None:
     finally:
         source.stop()
         await agent.close()
+        if helper is not None:
+            helper.close()
         if agent.session_id:
             console.status(f"session {agent.session_id} (resume with --resume {agent.session_id})")
 

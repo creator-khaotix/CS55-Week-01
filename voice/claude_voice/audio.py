@@ -25,7 +25,12 @@ FRAME_MS = 30
 FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000
 
 
-class MicListener:
+class VadSegmenter:
+    """Turns a stream of 30 ms PCM frames into SpeechStarted / Utterance events.
+
+    Thread-safe to feed from an audio callback or reader thread.
+    """
+
     def __init__(
         self,
         queue: asyncio.Queue[InputEvent],
@@ -37,7 +42,6 @@ class MicListener:
         min_utterance_ms: int = 300,
         preroll_ms: int = 300,
         is_assistant_talking: Callable[[], bool] = lambda: False,
-        device: int | str | None = None,
     ) -> None:
         import webrtcvad
 
@@ -54,8 +58,6 @@ class MicListener:
             maxlen=max(1, preroll_ms // FRAME_MS)
         )
         self._is_assistant_talking = is_assistant_talking
-        self._device = device
-        self._stream = None
         self.muted = False
 
         self._in_speech = False
@@ -63,33 +65,11 @@ class MicListener:
         self._silent_run = 0
         self._frames: list[bytes] = []
 
-    def start(self) -> None:
-        import sounddevice as sd
-
-        self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="int16",
-            blocksize=FRAME_SAMPLES,
-            device=self._device,
-            callback=self._on_audio,
-        )
-        self._stream.start()
-
-    def stop(self) -> None:
-        if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
-
     def _emit(self, event: InputEvent) -> None:
         self._loop.call_soon_threadsafe(self._queue.put_nowait, event)
 
-    def _on_audio(self, indata, frames, time_info, status) -> None:  # audio thread
-        if self.muted:
-            return
-        frame = indata[:, 0].tobytes()
-        if len(frame) != FRAME_SAMPLES * 2:
+    def feed(self, frame: bytes) -> None:
+        if self.muted or len(frame) != FRAME_SAMPLES * 2:
             return
         voiced = self._vad.is_speech(frame, SAMPLE_RATE)
 
@@ -122,6 +102,36 @@ class MicListener:
                 # Too short to be words (a cough, a click). An empty utterance
                 # tells the conversation to resume anything it paused.
                 self._emit(Utterance(text=""))
+
+
+class MicListener:
+    """Plain microphone input via sounddevice (no echo cancellation)."""
+
+    def __init__(
+        self, queue: asyncio.Queue[InputEvent], *, device: int | str | None = None, **vad
+    ) -> None:
+        self.segmenter = VadSegmenter(queue, **vad)
+        self._device = device
+        self._stream = None
+
+    def start(self) -> None:
+        import sounddevice as sd
+
+        self._stream = sd.InputStream(
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            dtype="int16",
+            blocksize=FRAME_SAMPLES,
+            device=self._device,
+            callback=lambda indata, *_: self.segmenter.feed(indata[:, 0].tobytes()),
+        )
+        self._stream.start()
+
+    def stop(self) -> None:
+        if self._stream is not None:
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
 
 
 class KeyboardInput:
