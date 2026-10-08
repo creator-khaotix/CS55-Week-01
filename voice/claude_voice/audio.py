@@ -23,6 +23,10 @@ from .events import InputEvent, Quit, SpeechStarted, Utterance
 SAMPLE_RATE = 16_000
 FRAME_MS = 30
 FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000
+# Barge-in loudness, as RMS of 16-bit samples: how far above the leftover echo
+# a frame must be, and an absolute floor so faint echo never counts.
+ECHO_MARGIN = 3.0
+MIN_BARGE_IN_LEVEL = 300.0
 
 
 class VadSegmenter:
@@ -58,6 +62,10 @@ class VadSegmenter:
             maxlen=max(1, preroll_ms // FRAME_MS)
         )
         self._is_assistant_talking = is_assistant_talking
+        # Leftover echo still looks like speech to the VAD, but it's quieter
+        # than someone actually talking. Track its level while Claude speaks
+        # and only count frames well above it toward a barge-in.
+        self._echo_level = 0.0
         self.muted = False
 
         self._in_speech = False
@@ -75,10 +83,15 @@ class VadSegmenter:
 
         if not self._in_speech:
             self._preroll.append(frame)
+            talking = self._is_assistant_talking()
+            if talking:
+                level = float(np.sqrt(np.mean(np.frombuffer(frame, np.int16).astype(np.float32) ** 2)))
+                loud = level > max(ECHO_MARGIN * self._echo_level, MIN_BARGE_IN_LEVEL)
+                if not loud:
+                    self._echo_level = 0.9 * self._echo_level + 0.1 * level
+                voiced = voiced and loud
             self._voiced_run = self._voiced_run + 1 if voiced else 0
-            needed = (
-                self._barge_in_frames if self._is_assistant_talking() else self._start_frames
-            )
+            needed = self._barge_in_frames if talking else self._start_frames
             if self._voiced_run >= needed:
                 self._in_speech = True
                 self._silent_run = 0

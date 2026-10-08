@@ -6,6 +6,7 @@ import asyncio
 import collections
 import shutil
 import sys
+import time
 from typing import Callable, Protocol
 
 
@@ -155,8 +156,14 @@ class Speaker:
     * `clear()` drops everything, for when the user said something real.
     """
 
-    def __init__(self, backend: TTSBackend) -> None:
+    def __init__(self, backend: TTSBackend, echo_tail_s: float = 0.8) -> None:
         self._backend = backend
+        # The room (and echo canceller) keeps ringing briefly after each
+        # sentence, and the next one takes a moment to synthesise; count both
+        # gaps as "talking" so the mic stays strict about barge-ins.
+        self._echo_tail_s = echo_tail_s
+        self._quiet_since = float("-inf")
+        self._recent: collections.deque[str] = collections.deque(maxlen=4)
         self._queue: collections.deque[str] = collections.deque()
         self._wake = asyncio.Event()
         self._idle = asyncio.Event()
@@ -174,7 +181,15 @@ class Speaker:
 
     @property
     def talking(self) -> bool:
-        return self._current is not None
+        """True while speaking, and for a short echo tail after."""
+        if self._current is not None:
+            return True
+        return time.monotonic() - self._quiet_since < self._echo_tail_s
+
+    @property
+    def recent_speech(self) -> str:
+        """The last few sentences played (even partly), to recognise our own echo."""
+        return " ".join(self._recent)
 
     def say(self, text: str) -> None:
         self._queue.append(text)
@@ -218,11 +233,13 @@ class Speaker:
             while self._queue and not self._held:
                 text = self._queue.popleft()
                 self._current = text
+                self._recent.append(text)
                 self._interrupted = False
                 try:
                     await self._backend.speak(text)
                 finally:
                     self._current = None
+                    self._quiet_since = time.monotonic()
                 if not self._interrupted:
                     self.last_spoken = text
             self._update_idle()

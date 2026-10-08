@@ -48,6 +48,23 @@ def is_stop(text: str) -> bool:
     return bool(_STOP.match(_norm(text)))
 
 
+def is_echo(text: str, spoken: str) -> bool:
+    """Did the mic just transcribe Claude's own voice back?
+
+    Echo cancellation isn't perfect, so a "barge-in" is sometimes Claude
+    hearing itself. If nearly every word was something Claude just said, it's
+    an echo, not the user.
+    """
+    heard = _norm(text).split()
+    said = _norm(spoken).split()
+    if not heard or not said:
+        return False
+    if len(heard) < 3:  # too few words to judge by overlap; need the exact phrase
+        return f" {' '.join(heard)} " in f" {' '.join(said)} "
+    said_words = set(said)
+    return sum(w in said_words for w in heard) / len(heard) >= 0.8
+
+
 class Agent(Protocol):
     def run_turn(self, prompt: str) -> Any: ...  # AsyncIterator[AgentEvent]
 
@@ -118,6 +135,11 @@ class VoiceConversation:
             self.console.user(text)
             self.speaker.clear()
             self.gate.answer(text)
+            return
+
+        if barged_in and text and is_echo(text, self.speaker.recent_speech):
+            self.console.user(text, note="(own echo, ignored)")
+            self.speaker.resume()
             return
 
         if not text or (barged_in and is_backchannel(text)):

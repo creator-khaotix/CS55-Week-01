@@ -89,6 +89,9 @@ final class AudioHelper {
         let output = engine.outputNode
         _ = engine.mainMixerNode  // build the output graph before switching on voice processing
         try input.setVoiceProcessingEnabled(true)
+        // Auto gain turns up the faint echo the canceller leaves behind,
+        // which is loud enough to sound like the user talking over Claude.
+        input.isVoiceProcessingAGCEnabled = false
         if !output.isVoiceProcessingEnabled {
             try output.setVoiceProcessingEnabled(true)
         }

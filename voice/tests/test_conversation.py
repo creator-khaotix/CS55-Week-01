@@ -12,7 +12,7 @@ from claude_voice.agent import (
     describe_tool,
     parse_yes_no,
 )
-from claude_voice.conversation import VoiceConversation, is_backchannel, is_stop
+from claude_voice.conversation import VoiceConversation, is_backchannel, is_echo, is_stop
 from claude_voice.events import Quit, SpeechStarted, Utterance
 from claude_voice.tts import Speaker
 from claude_voice.ui import Console
@@ -203,3 +203,41 @@ async def test_text_written_after_a_cut_off_still_reaches_the_screen(started, ca
     assert "sh build.sh" in out  # on screen...
     assert "cut off" in out
     assert not any("build.sh" in s for s in tts.spoken)  # ...but never spoken
+
+
+def test_echo_classifier():
+    said = "One. Two is here. Three is next."
+    assert is_echo("two is here three", said)
+    assert is_echo("Three is next.", said)
+    assert not is_echo("what time is it", said)
+    assert not is_echo("no", said)
+    assert not is_echo("anything", "")
+
+
+async def test_own_echo_does_not_interrupt(started):
+    convo, agent, tts, events = started(tts=FakeTTS(seconds=0.15))
+    await say(events, "count to four", settle=0.2)
+    await say(events, "two is here three is next", settle=1.0)
+    await finish(convo, events)
+    assert agent.prompts == ["count to four"]  # the echo never reached Claude
+    assert agent.interrupts == 0
+    assert tts.cut and tts.cut[0] in tts.spoken  # paused, then replayed
+
+
+def test_echo_classifier():
+    said = "One. Two is here. Three is next."
+    assert is_echo("two is here three", said)
+    assert is_echo("Three is next.", said)
+    assert not is_echo("what time is it", said)
+    assert not is_echo("no", said)
+    assert not is_echo("anything", "")
+
+
+async def test_own_echo_does_not_interrupt(started):
+    convo, agent, tts, events = started(tts=FakeTTS(seconds=0.15))
+    await say(events, "count to four", settle=0.2)
+    await say(events, "two is here three is next", settle=1.0)
+    await finish(convo, events)
+    assert agent.prompts == ["count to four"]  # the echo never reached Claude
+    assert agent.interrupts == 0
+    assert tts.cut and tts.cut[0] in tts.spoken  # paused, then replayed
