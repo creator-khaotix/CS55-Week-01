@@ -20,6 +20,29 @@ func emit(_ line: String) {
     FileHandle.standardError.write(("EVT " + line + "\n").data(using: .utf8)!)
 }
 
+func log(_ line: String) {
+    FileHandle.standardError.write((line + "\n").data(using: .utf8)!)
+}
+
+/// Ask for microphone access up front; voice processing fails to start without it.
+func ensureMicAccess() -> Bool {
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .authorized:
+        return true
+    case .notDetermined:
+        let done = DispatchSemaphore(value: 0)
+        var granted = false
+        AVCaptureDevice.requestAccess(for: .audio) { ok in
+            granted = ok
+            done.signal()
+        }
+        done.wait()
+        return granted
+    default:
+        return false
+    }
+}
+
 /// Convert one buffer, keeping the converter's state for the next call.
 func convert(_ buffer: AVAudioPCMBuffer, _ converter: AVAudioConverter) -> AVAudioPCMBuffer? {
     let ratio = converter.outputFormat.sampleRate / buffer.format.sampleRate
@@ -47,20 +70,39 @@ final class AudioHelper {
     let synth = AVSpeechSynthesizer()
     let micFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true)!
-    let playFormat = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+    var playFormat = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
     var micConverter: AVAudioConverter?
     var speechConverter: AVAudioConverter?
     var generation = 0  // bumped by speak/stop so stale callbacks are ignored
     let micOut = FileHandle.standardOutput
 
     func start() throws {
+        guard ensureMicAccess() else {
+            throw NSError(domain: "claude-voice-audio", code: 2, userInfo: [
+                NSLocalizedDescriptionKey:
+                    "microphone access denied: allow your terminal app in System Settings > "
+                    + "Privacy & Security > Microphone, then restart it",
+            ])
+        }
         let input = engine.inputNode
-        try input.setVoiceProcessingEnabled(true)  // also enables it on the output side
+        let output = engine.outputNode
+        _ = engine.mainMixerNode  // build the output graph before switching on voice processing
+        try input.setVoiceProcessingEnabled(true)
+        if !output.isVoiceProcessingEnabled {
+            try output.setVoiceProcessingEnabled(true)
+        }
 
+        // Play at whatever rate the output hardware runs; a mismatch makes the
+        // voice-processing unit fail to initialise (error -10875).
+        let hwFormat = output.outputFormat(forBus: 0)
+        let rate = hwFormat.sampleRate > 0 ? hwFormat.sampleRate : 48_000
+        playFormat = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1)!
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: playFormat)
 
         let inFormat = input.outputFormat(forBus: 0)
+        log("mic format: \(inFormat)")
+        log("output format: \(hwFormat)")
         guard let conv = AVAudioConverter(from: inFormat, to: micFormat) else {
             throw NSError(domain: "claude-voice-audio", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "can't convert mic format \(inFormat)",

@@ -119,8 +119,10 @@ async def amain(args: argparse.Namespace) -> None:
         if helper is not None:
             source = EchoCancelledMic(events, helper, **vad)
         else:
-            if sys.platform == "darwin":
+            if sys.platform == "darwin" and not helper_available():
                 console.note("no echo cancellation: run macos/build.sh, or use headphones")
+            elif sys.platform == "darwin" and not args.text:
+                console.note("no echo cancellation: use headphones, or Claude may interrupt itself")
             source = MicListener(events, device=device, **vad)
 
     console.status(f"connecting to Claude Code in {args.cwd}")
