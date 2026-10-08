@@ -94,6 +94,8 @@ class VoicePermissionGate:
     your existing allow/deny rules in settings.json still apply first.
     """
 
+    REASKS = 2  # times to repeat the question after an unclear short reply
+
     def __init__(
         self,
         ask: Callable[[str], None],
@@ -125,15 +127,23 @@ class VoicePermissionGate:
         if name in self._auto_allow:
             return PermissionResultAllow()
         self._show(name, tool_input)
-        self._pending = asyncio.get_running_loop().create_future()
-        self._ask(f"I'd like to {describe_tool(name, tool_input)}. Okay?")
-        try:
-            reply = await asyncio.wait_for(self._pending, self._timeout)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            return PermissionResultDeny(message="No answer from the user; not approved.")
-        finally:
-            self._pending = None
-        verdict = parse_yes_no(reply)
+        question = f"I'd like to {describe_tool(name, tool_input)}. Okay?"
+        for _ in range(1 + self.REASKS):
+            self._pending = asyncio.get_running_loop().create_future()
+            self._ask(question)
+            try:
+                reply = await asyncio.wait_for(self._pending, self._timeout)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                return PermissionResultDeny(message="No answer from the user; not approved.")
+            finally:
+                self._pending = None
+            verdict = parse_yes_no(reply)
+            # A few stray words are usually background noise or Whisper
+            # inventing "thanks for watching" from silence; ask again rather
+            # than treat them as an answer.
+            if verdict is not None or len(reply.split()) > 4:
+                break
+            question = "Sorry, was that a yes or a no?"
         if verdict:
             return PermissionResultAllow()
         if verdict is False:

@@ -241,3 +241,25 @@ async def test_own_echo_does_not_interrupt(started):
     assert agent.prompts == ["count to four"]  # the echo never reached Claude
     assert agent.interrupts == 0
     assert tts.cut and tts.cut[0] in tts.spoken  # paused, then replayed
+
+
+async def test_unclear_approval_is_asked_again(started):
+    convo, agent, tts, events = started(agent=FakeAgent(reply="Done."))
+    await say(events, "use a tool", settle=0.2)
+    await say(events, "Thanks for your question.", settle=0.3)
+    await say(events, "yes", settle=0.5)
+    await finish(convo, events)
+    assert any("yes or a no" in s for s in tts.spoken + tts.cut)
+    assert any(s.startswith("verdict allow") for s in tts.spoken)
+    assert len(agent.prompts) == 1
+
+
+async def test_unclear_approval_is_asked_again(started):
+    convo, agent, tts, events = started(agent=FakeAgent(reply="Done."))
+    await say(events, "use a tool", settle=0.2)
+    await say(events, "Thanks for your question.", settle=0.3)
+    await say(events, "yes", settle=0.5)
+    await finish(convo, events)
+    assert any("yes or a no" in s for s in tts.spoken + tts.cut)
+    assert any(s.startswith("verdict allow") for s in tts.spoken)
+    assert len(agent.prompts) == 1
