@@ -44,9 +44,10 @@ class Console:
         suffix = f" {self._c(DIM, note)}" if note else ""
         self._line(f"{self._c(BOLD + GREEN, 'you')}  {text}{suffix}")
 
-    def claude_text(self, delta: str) -> None:
+    def claude_text(self, delta: str, cut_off: bool = False) -> None:
         if not self._mid_reply:
-            print(f"{self._c(BOLD + CYAN, 'claude')} ", end="")
+            label = self._c(BOLD + CYAN, "claude") + (self._c(DIM, " (cut off, not spoken)") if cut_off else "")
+            print(f"{label} ", end="")
             self._mid_reply = True
         print(delta, end="", flush=True)
 

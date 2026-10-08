@@ -180,7 +180,10 @@ class VoiceConversation:
         try:
             async for event in self.agent.run_turn(prompt):
                 if not live():
-                    continue  # drain the interrupted turn without speaking it
+                    # Cut off: stop speaking, but still print it. Claude remembers
+                    # writing it, so a command it "put on screen" must really be there.
+                    self._show_only(event)
+                    continue
                 self._handle(event, chunker)
         except Exception as exc:  # noqa: BLE001
             if live():
@@ -192,6 +195,14 @@ class VoiceConversation:
                     self.speaker.say(sentence)
                 self.console.end_reply()
                 self.console.listening()
+            else:
+                self.console.end_reply()
+
+    def _show_only(self, event: AgentEvent) -> None:
+        if isinstance(event, TextDelta):
+            self.console.claude_text(event.text, cut_off=True)
+        elif isinstance(event, ToolStarted):
+            self.console.tool(event.name, event.input)
 
     def _handle(self, event: AgentEvent, chunker: SpeechChunker) -> None:
         if isinstance(event, TextDelta):

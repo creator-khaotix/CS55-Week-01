@@ -178,3 +178,28 @@ def test_describe_tool():
     )
     assert describe_tool("Edit", {"file_path": "/a/b/notes.md"}) == "edit notes.md"
     assert describe_tool("mcp__obsidian__search_notes", {}) == "use search notes from obsidian"
+
+
+class LateCommandAgent(FakeAgent):
+    """Like real Claude: finishes writing a code block after being interrupted."""
+
+    async def run_turn(self, prompt: str):
+        self.prompts.append(prompt)
+        self._interrupted.clear()
+        if len(self.prompts) == 1:
+            yield TextDelta("Run this: ")
+            await self._interrupted.wait()
+            yield TextDelta("```\nsh build.sh\n```")
+        yield TextBlockEnd()
+        yield TurnDone(None)
+
+
+async def test_text_written_after_a_cut_off_still_reaches_the_screen(started, capsys):
+    convo, agent, tts, events = started(agent=LateCommandAgent())
+    await say(events, "how do I build it", settle=0.2)
+    await say(events, "wait, hold on", settle=0.5)
+    await finish(convo, events)
+    out = capsys.readouterr().out
+    assert "sh build.sh" in out  # on screen...
+    assert "cut off" in out
+    assert not any("build.sh" in s for s in tts.spoken)  # ...but never spoken
