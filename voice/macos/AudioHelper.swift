@@ -72,6 +72,7 @@ final class AudioHelper {
         commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true)!
     var playFormat = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
     var micConverter: AVAudioConverter?
+    var monoIn: AVAudioFormat?
     var speechConverter: AVAudioConverter?
     var generation = 0  // bumped by speak/stop so stale callbacks are ignored
     let micOut = FileHandle.standardOutput
@@ -103,12 +104,14 @@ final class AudioHelper {
         let inFormat = input.outputFormat(forBus: 0)
         log("mic format: \(inFormat)")
         log("output format: \(hwFormat)")
-        guard let conv = AVAudioConverter(from: inFormat, to: micFormat) else {
+        // Voice processing reports several input channels, but only the first
+        // one has the echo removed; mixing in the others brings the echo back.
+        monoIn = AVAudioFormat(standardFormatWithSampleRate: inFormat.sampleRate, channels: 1)!
+        guard let conv = AVAudioConverter(from: monoIn!, to: micFormat) else {
             throw NSError(domain: "claude-voice-audio", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "can't convert mic format \(inFormat)",
             ])
         }
-        conv.downmix = true  // voice processing can report several input channels
         micConverter = conv
         input.installTap(onBus: 0, bufferSize: 4800, format: inFormat) { [weak self] buffer, _ in
             self?.onMic(buffer)
@@ -120,7 +123,13 @@ final class AudioHelper {
     }
 
     func onMic(_ buffer: AVAudioPCMBuffer) {  // audio thread
-        guard let conv = micConverter, let pcm = convert(buffer, conv), pcm.frameLength > 0,
+        guard let conv = micConverter, let monoIn = monoIn, let src = buffer.floatChannelData,
+            let mono = AVAudioPCMBuffer(pcmFormat: monoIn, frameCapacity: buffer.frameLength),
+            let dst = mono.floatChannelData
+        else { return }
+        mono.frameLength = buffer.frameLength
+        dst[0].update(from: src[0], count: Int(buffer.frameLength))  // channel 0 only
+        guard let pcm = convert(mono, conv), pcm.frameLength > 0,
             let samples = pcm.int16ChannelData
         else { return }
         micOut.write(Data(bytes: samples[0], count: Int(pcm.frameLength) * 2))

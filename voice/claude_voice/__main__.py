@@ -53,8 +53,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     g.add_argument("--end-silence-ms", type=int, default=700,
                    help="silence that ends your turn (raise if it cuts you off mid-thought)")
     g.add_argument("--barge-in-ms", type=int, default=None,
-                   help="speech needed to interrupt Claude (default 250 with echo "
-                        "cancellation, 350 without; raise if its own voice triggers it)")
+                   help="speech needed to interrupt Claude (default 350 with echo "
+                        "cancellation, 450 without; raise if its own voice triggers it)")
     g.add_argument("--vad", type=int, default=2, choices=[0, 1, 2, 3],
                    help="VAD aggressiveness, 3 = most eager to call things noise")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -113,7 +113,7 @@ async def amain(args: argparse.Namespace) -> None:
         vad = dict(
             vad_aggressiveness=args.vad,
             end_silence_ms=args.end_silence_ms,
-            barge_in_ms=args.barge_in_ms or (250 if use_aec else 350),
+            barge_in_ms=args.barge_in_ms or (350 if use_aec else 450),
             is_assistant_talking=lambda: speaker.talking,
         )
         if helper is not None:

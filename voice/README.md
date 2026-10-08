@@ -78,7 +78,7 @@ headphones, or raise `--barge-in-ms` if Claude interrupts itself.
 | Flag | Default | |
 |---|---|---|
 | `--end-silence-ms` | 700 | How long a pause ends your turn. Raise it if you get cut off mid-thought. |
-| `--barge-in-ms` | 250 / 350 | How much speech it takes to interrupt Claude. |
+| `--barge-in-ms` | 350 / 450 | How much speech it takes to interrupt Claude. |
 | `--permission-mode` | `default` | `acceptEdits` skips approvals for file edits. Approvals for shell commands are still spoken. |
 | `--auto-allow` | read-only tools | Tools that never need a spoken yes. Allow rules in `~/.claude/settings.json` apply as well. |
 | `--vocab` | | Words to bias Whisper toward: hostnames, project names, jargon. |
