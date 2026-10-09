@@ -16,6 +16,8 @@ from .stt import default_stt_name, make_stt
 from .tts import Speaker, default_tts_name, make_tts
 from .ui import Console
 
+MAC_VOICE = "Daniel"
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="claude-voice", description=__doc__)
@@ -43,7 +45,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     g.add_argument("--stt-model", help="whisper model name or HF repo")
     g.add_argument("--vocab", help="words to bias transcription toward, e.g. host and project names")
     g.add_argument("--tts", choices=["say", "espeak", "kokoro", "print"], default=None)
-    g.add_argument("--voice", help="TTS voice (say -v '?' lists macOS voices)")
+    g.add_argument("--voice", help="TTS voice (say -v '?' lists macOS voices; default Daniel)")
     g.add_argument("--rate", type=int, help="speaking rate (words per minute for say/espeak)")
     g.add_argument("--input-device", help="sounddevice input device index or name")
     g.add_argument("--no-aec", action="store_true",
@@ -78,10 +80,11 @@ async def amain(args: argparse.Namespace) -> None:
             helper, use_aec = None, False
 
     if helper is not None:
-        speaker = Speaker(HelperTTS(helper, args.voice, args.rate))
+        speaker = Speaker(HelperTTS(helper, args.voice or MAC_VOICE, args.rate))
     else:
         tts_name = "print" if (args.mute or args.text and args.tts is None) else (args.tts or default_tts_name())
-        speaker = Speaker(make_tts(tts_name, args.voice, args.rate))
+        voice = args.voice or (MAC_VOICE if tts_name == "say" else None)
+        speaker = Speaker(make_tts(tts_name, voice, args.rate))
 
     gate = VoicePermissionGate(
         ask=speaker.say,
