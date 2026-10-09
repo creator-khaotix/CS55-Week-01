@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-voice"
+version = "0.1.0"
+description = "Talk to Claude Code by voice, with natural interruption"
+requires-python = ">=3.10"
+dependencies = [
+    "claude-agent-sdk>=0.2",
+    "numpy>=1.24",
+    "sounddevice>=0.4.6",
+    "webrtcvad-wheels>=2.0.11",
+]
+
+[project.optional-dependencies]
+# Apple Silicon: Whisper on the GPU. The best choice on an M-series Mac.
+mac = ["mlx-whisper>=0.4"]
+# Cross-platform Whisper on CPU (or CUDA).
+whisper = ["faster-whisper>=1.0"]
+# Natural-sounding local neural TTS.
+kokoro = ["kokoro>=0.9", "soundfile"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+claude-voice = "claude_voice.__main__:main"
+
+[tool.setuptools]
+packages = ["claude_voice"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
